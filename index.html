@@ -101,6 +101,7 @@
     <button data-size="15">15&times;15</button>
   </div>
   <button class="btn mode fill" id="modeBtn" title="Toggle fill / cross (F)">FILL</button>
+  <button class="btn" id="pauseBtn" title="Pause (Esc / P)">PAUSE</button>
   <button class="btn" id="resetBtn" title="Restart level (R)">RESTART</button>
   <button class="btn" id="levelsBtn" title="Level select (L)">LEVELS</button>
 </div>
@@ -116,14 +117,17 @@
   <canvas id="cv"></canvas>
   <div id="overlay">
     <h2 id="ovTitle">PIXEL PICROSS</h2>
-    <p id="ovText">Fill the cells so each row and column matches its number clues. Every number is the length of a solid block of filled cells in that line.</p>
-    <button class="big" id="ovBtn">PLAY</button>
+    <p id="ovText">Fill the cells so each row and column matches its number clues.</p>
+    <div id="ovStats" style="display:flex;gap:18px;color:var(--dim);font-size:14px;"></div>
+    <div id="ovBest" style="color:var(--good);font-weight:700;font-size:15px;"></div>
+    <button class="big" id="ovBtn">▶ PLAY</button>
+    <div style="color:var(--dim);font-size:12px;">Tap / click to cycle empty → filled → cross</div>
   </div>
 </div>
 
 <div class="hint">
   Tap / click to cycle <b>empty &rarr; filled &rarr; cross</b> &middot;
-  <kbd>F</kbd> toggle mode &middot; <kbd>R</kbd> restart &middot; <kbd>L</kbd> levels &middot;
+  <kbd>F</kbd> toggle mode &middot; <kbd>Esc</kbd>/<kbd>P</kbd> pause &middot; <kbd>R</kbd> restart &middot; <kbd>L</kbd> levels &middot;
   <kbd>1</kbd>/<kbd>2</kbd> size
 </div>
 
@@ -1076,6 +1080,31 @@ const state = {
   elapsed: 0,
   timerId: null
 };
+/* ===================== AUDIO (WebAudio, no files) ===================== */
+let AC = null;
+function audio(){
+  if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ AC = null; } }
+  if(AC && AC.state === "suspended") AC.resume();
+  return AC;
+}
+function beep(freq, dur, type, vol, delay){
+  const ac = audio(); if(!ac) return;
+  const t0 = ac.currentTime + (delay||0);
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type || "square"; o.frequency.value = freq;
+  g.gain.setValueAtTime(vol||0.05, t0);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g); g.connect(ac.destination);
+  o.start(t0); o.stop(t0 + dur + 0.02);
+}
+const sfx = {
+  place: ()=> beep(520, 0.06, "square", 0.04),
+  cross: ()=> beep(300, 0.06, "square", 0.04),
+  erase: ()=> beep(200, 0.05, "triangle", 0.03),
+  win:   ()=> { beep(523,0.12,"square",0.06,0); beep(659,0.12,"square",0.06,0.12); beep(784,0.2,"square",0.07,0.24); },
+  pause: ()=> beep(440, 0.08, "triangle", 0.04)
+};
+
 const LS_KEY = "launchtower_pixel_picross_v1";
 let progress = loadProgress();
 
@@ -1207,6 +1236,7 @@ function newLevel(size, level){
   state.mistakes = 0;
   state.solved = false;
   state.started = false;
+  state.paused = false;
   state.elapsed = 0;
   if(state.timerId){ clearInterval(state.timerId); state.timerId=null; }
   layout();
@@ -1221,6 +1251,33 @@ function startTimer(){
   state.startTime = Date.now();
   state.timerId = setInterval(tick, 500);
 }
+function pauseGame(){
+  if(!state.started || state.solved || state.paused) return;
+  state.paused = true;
+  pauseTimer();
+  sfx.pause();
+  showOverlay(true, "PAUSED", "Take a breath. Your board is saved.", "RESUME");
+  ovAction = "resume";
+}
+function resumeGame(){
+  if(!state.paused) return;
+  state.paused = false;
+  overlay.classList.add("hidden");
+  overlay.querySelectorAll("button:not(.big)").forEach(x=>x.remove());
+  state.startTime = Date.now() - state.elapsed*1000;
+  resumeTimer();
+}
+function pauseTimer(){
+  if(!state.started || !state.timerId) return;
+  clearInterval(state.timerId); state.timerId = null;
+}
+function resumeTimer(){
+  if(!state.started || state.timerId) return;
+  state.timerId = setInterval(tick, 500);
+}
+document.addEventListener("visibilitychange", ()=>{
+  if(document.hidden) pauseGame();
+});
 function tick(){
   state.elapsed = Math.floor((Date.now()-state.startTime)/1000);
   updateStats();
@@ -1250,7 +1307,7 @@ function checkSolved(){
 }
 
 function onCellClick(r,c){
-  if(state.solved) return;
+  if(state.solved || state.paused) return;
   startTimer();
   const cur = state.cells[r][c];
   // cycle: 0 -> mode -> other -> 0
@@ -1259,6 +1316,7 @@ function onCellClick(r,c){
   else if(cur === state.mode) next = state.mode===1 ? 2 : 1;
   else next = 0;
   state.cells[r][c] = next;
+  if(next===1) sfx.place(); else if(next===2) sfx.cross(); else sfx.erase();
   draw();
   if(checkSolved()) win();
 }
@@ -1284,10 +1342,18 @@ function win(){
     progress.unlocked[key] = Math.max(progress.unlocked[key], state.level+2);
   }
   saveProgress();
+  sfx.win();
   const isLast = state.level+1 >= maxLvl;
+  const best = progress.best[key] && progress.best[key][state.level];
+  const isNewBest = best === state.elapsed;
   showOverlay(true, isLast ? "ALL LEVELS CLEARED!" : "SOLVED!",
     `Time ${fmtTime(state.elapsed)} · ${state.mistakes} mistake${state.mistakes===1?"":"s"}`,
     isLast ? "PLAY AGAIN" : "NEXT LEVEL");
+  const st = document.getElementById("ovStats");
+  st.innerHTML = `<span>Time <b style="color:var(--ink)">${fmtTime(state.elapsed)}</b></span>` +
+    `<span>Best <b style="color:var(--good)">${best?fmtTime(best):"—"}</b></span>`;
+  const ob = document.getElementById("ovBest");
+  ob.textContent = isNewBest ? "★ NEW BEST!" : "";
 }
 
 /* ===================== OVERLAY ===================== */
@@ -1309,7 +1375,9 @@ function showOverlay(show, title, text, btnLabel){
   }
 }
 ovBtn.addEventListener("click", ()=>{
-  if(ovAction === "play"){
+  if(ovAction === "resume"){
+    resumeGame();
+  } else if(ovAction === "play"){
     if(state.solved && state.level+1 < SIZES[state.size]){
       newLevel(state.size, state.level+1);
     } else {
@@ -1384,7 +1452,11 @@ function toggleMode(){
   btn.textContent = state.mode===1 ? "FILL" : "CROSS";
   btn.className = "btn mode " + (state.mode===1 ? "fill" : "cross");
 }
+document.getElementById("pauseBtn").addEventListener("click", ()=>{
+  if(state.paused) resumeGame(); else pauseGame();
+});
 document.getElementById("resetBtn").addEventListener("click", ()=>{
+  if(state.paused){ state.paused = false; }
   newLevel(state.size, state.level);
 });
 document.getElementById("levelsBtn").addEventListener("click", showLevelSelect);
@@ -1403,8 +1475,9 @@ document.querySelectorAll("#sizeSeg button").forEach(b=>{
 document.addEventListener("keydown", (e)=>{
   const k = e.key.toLowerCase();
   if(k==="f") toggleMode();
-  else if(k==="r") newLevel(state.size, state.level);
+  else if(k==="r"){ if(state.paused) state.paused=false; newLevel(state.size, state.level); }
   else if(k==="l") showLevelSelect();
+  else if(k==="escape" || k==="p"){ if(state.paused) resumeGame(); else pauseGame(); }
   else if(k==="1"){ document.querySelector('#sizeSeg button[data-size="10"]').click(); }
   else if(k==="2"){ document.querySelector('#sizeSeg button[data-size="15"]').click(); }
 });
@@ -1423,7 +1496,7 @@ function toast(msg){
 newLevel(10, 0);
 showOverlay(true, "PIXEL PICROSS",
   "Fill the cells so each row and column matches its number clues. Every number is the length of a solid block of filled cells in that line.",
-  "PLAY");
+  "▶ PLAY");
 </script>
 </body>
 </html>

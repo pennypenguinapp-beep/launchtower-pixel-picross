@@ -1,0 +1,1429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Pixel Picross — LaunchTower</title>
+<style>
+  :root{
+    --bg:#0f1117; --panel:#171a23; --panel2:#1d2130; --line:#2a2f40;
+    --ink:#e8ecf4; --dim:#8b93a7; --accent:#5eead4; --accent2:#818cf8;
+    --fill:#5eead4; --cross:#f87171; --good:#4ade80; --bad:#f87171;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:'Segoe UI', system-ui, -apple-system, sans-serif;
+    display:flex; flex-direction:column; align-items:center;
+    min-height:100vh; padding:14px 10px 8px;
+    -webkit-tap-highlight-color:transparent;
+  }
+  header{ text-align:center; margin-bottom:10px; }
+  h1{
+    font-size:clamp(20px,4.5vw,30px); letter-spacing:2px; font-weight:800;
+    background:linear-gradient(90deg,var(--accent),var(--accent2));
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+  .sub{ color:var(--dim); font-size:12px; margin-top:3px; letter-spacing:.5px;}
+  .toolbar{
+    display:flex; gap:8px; flex-wrap:wrap; justify-content:center;
+    margin:10px 0; width:100%; max-width:560px;
+  }
+  .seg{ display:flex; background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden;}
+  .seg button{
+    background:transparent; border:none; color:var(--dim); padding:8px 14px;
+    font-size:13px; font-weight:600; cursor:pointer; transition:.15s;
+  }
+  .seg button.on{ background:var(--panel2); color:var(--ink); box-shadow:inset 0 -2px 0 var(--accent);}
+  .btn{
+    background:var(--panel); border:1px solid var(--line); color:var(--ink);
+    padding:8px 14px; border-radius:10px; font-size:13px; font-weight:600; cursor:pointer; transition:.15s;
+  }
+  .btn:hover{ border-color:var(--accent); }
+  .btn.mode{ min-width:64px; }
+  .btn.mode.fill{ border-color:var(--fill); color:var(--fill); }
+  .btn.mode.cross{ border-color:var(--cross); color:var(--cross); }
+  .stats{
+    display:flex; gap:14px; justify-content:center; flex-wrap:wrap;
+    color:var(--dim); font-size:13px; margin-bottom:10px;
+  }
+  .stats b{ color:var(--ink); font-variant-numeric:tabular-nums; }
+  .stats .err b{ color:var(--bad); }
+  .stats .best b{ color:var(--good); }
+  #wrap{
+    position:relative; background:var(--panel); border:1px solid var(--line);
+    border-radius:14px; padding:10px; box-shadow:0 8px 30px rgba(0,0,0,.35);
+    touch-action:manipulation;
+  }
+  canvas{ display:block; border-radius:8px; image-rendering:pixelated; }
+  #overlay{
+    position:absolute; inset:10px; border-radius:8px;
+    background:rgba(15,17,23,.88); backdrop-filter:blur(3px);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:12px; text-align:center; padding:20px;
+  }
+  #overlay.hidden{ display:none; }
+  #overlay h2{ font-size:24px; letter-spacing:1px; }
+  #overlay p{ color:var(--dim); font-size:14px; max-width:340px; line-height:1.5;}
+  #overlay .big{
+    background:linear-gradient(90deg,var(--accent),var(--accent2));
+    color:#0b0d12; border:none; padding:12px 26px; border-radius:12px;
+    font-size:15px; font-weight:800; cursor:pointer; letter-spacing:.5px;
+  }
+  #overlay .big:active{ transform:scale(.97); }
+  .hint{ color:var(--dim); font-size:11.5px; margin-top:8px; text-align:center; max-width:420px; line-height:1.5;}
+  .hint kbd{
+    background:var(--panel2); border:1px solid var(--line); border-radius:4px;
+    padding:1px 5px; font-size:10.5px; color:var(--ink);
+  }
+  footer{ margin-top:14px; }
+  footer a{ color:var(--dim); font-size:12px; text-decoration:none; letter-spacing:.5px;}
+  footer a:hover{ color:var(--accent); }
+  .toast{
+    position:fixed; top:14px; left:50%; transform:translateX(-50%);
+    background:var(--panel2); border:1px solid var(--accent); color:var(--ink);
+    padding:9px 18px; border-radius:10px; font-size:13px; font-weight:600;
+    opacity:0; pointer-events:none; transition:opacity .25s; z-index:50;
+  }
+  .toast.show{ opacity:1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>PIXEL PICROSS</h1>
+  <div class="sub">nonogram puzzles &middot; LaunchTower</div>
+</header>
+
+<div class="toolbar">
+  <div class="seg" id="sizeSeg">
+    <button data-size="10" class="on">10&times;10</button>
+    <button data-size="15">15&times;15</button>
+  </div>
+  <button class="btn mode fill" id="modeBtn" title="Toggle fill / cross (F)">FILL</button>
+  <button class="btn" id="resetBtn" title="Restart level (R)">RESTART</button>
+  <button class="btn" id="levelsBtn" title="Level select (L)">LEVELS</button>
+</div>
+
+<div class="stats">
+  <span>Level <b id="stLevel">1</b></span>
+  <span class="err">Mistakes <b id="stErr">0</b></span>
+  <span>Time <b id="stTime">0:00</b></span>
+  <span class="best">Best <b id="stBest">&mdash;</b></span>
+</div>
+
+<div id="wrap">
+  <canvas id="cv"></canvas>
+  <div id="overlay">
+    <h2 id="ovTitle">PIXEL PICROSS</h2>
+    <p id="ovText">Fill the cells so each row and column matches its number clues. Every number is the length of a solid block of filled cells in that line.</p>
+    <button class="big" id="ovBtn">PLAY</button>
+  </div>
+</div>
+
+<div class="hint">
+  Tap / click to cycle <b>empty &rarr; filled &rarr; cross</b> &middot;
+  <kbd>F</kbd> toggle mode &middot; <kbd>R</kbd> restart &middot; <kbd>L</kbd> levels &middot;
+  <kbd>1</kbd>/<kbd>2</kbd> size
+</div>
+
+<footer><a href="https://pennypenguinapp-beep.github.io/" target="_blank" rel="noopener">more LaunchTower tools &rarr;</a></footer>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+/* ===================== PUZZLE GENERATION ===================== */
+/* Each puzzle is a tiny drawn icon (1=fill) scaled to the grid. */
+const ICONS_10 = [
+  // heart
+  [
+  "..........",
+  "..##..##..",
+  ".####.####",
+  "##########",
+  "##########",
+  ".########.",
+  "..######..",
+  "...####...",
+  "....##....",
+  ".........."],
+  // star
+  [
+  "....##....",
+  "....##....",
+  "...####...",
+  "##########",
+  ".########.",
+  "..######..",
+  ".##....##.",
+  ".##....##.",
+  "..........",
+  ".........."],
+  // mushroom
+  [
+  "...####...",
+  "..######..",
+  ".########.",
+  "##########",
+  "##########",
+  "..######..",
+  "..######..",
+  "..######..",
+  "...####...",
+  ".........."],
+  // rocket
+  [
+  "....##....",
+  "...####...",
+  "...####...",
+  "...####...",
+  "...####...",
+  "..######..",
+  ".##.##.##.",
+  ".##....##.",
+  "..........",
+  ".........."],
+  // ghost
+  [
+  "...####...",
+  "..######..",
+  ".########.",
+  ".########.",
+  ".########.",
+  ".########.",
+  ".########.",
+  ".########.",
+  ".#..##..#.",
+  ".........."],
+  // apple
+  [
+  "....#.....",
+  "...##.....",
+  "..######..",
+  ".########.",
+  "##########",
+  "##########",
+  ".########.",
+  "..######..",
+  "...####...",
+  ".........."],
+  // crown
+  [
+  "#..##..##.#",
+  "#..##..##.#",
+  "#..##..##.#",
+  "###########",
+  "###########",
+  "###########",
+  "###########",
+  "###########",
+  "..........",
+  ".........."],
+  // diamond
+  [
+  "....##....",
+  "...####...",
+  "..######..",
+  ".########.",
+  "##########",
+  ".########.",
+  "..######..",
+  "...####...",
+  "....##....",
+  ".........."],
+  // flower
+  [
+  "...####...",
+  "..######..",
+  ".##.##.##.",
+  "..######..",
+  "...####...",
+  "....##....",
+  "....##....",
+  "....##....",
+  "....##....",
+  ".........."],
+  // lightning
+  [
+  "....####..",
+  "...####...",
+  "..####....",
+  ".########.",
+  "....####..",
+  "...####...",
+  "..####....",
+  ".####.....",
+  "####......",
+  ".........."],
+  // key
+  [
+  "..###.....",
+  ".#...#....",
+  ".#...#....",
+  "..###.....",
+  "..#.#.....",
+  "..#.#.....",
+  "..#.#.....",
+  "..#.#.....",
+  "..#.#.....",
+  ".........."],
+  // skull
+  [
+  "...####...",
+  "..######..",
+  ".########.",
+  ".########.",
+  "##.####.##",
+  ".########.",
+  "..#.#.#...",
+  "..######..",
+  "...####...",
+  ".........."],
+  // tree
+  [
+  "....##....",
+  "...####...",
+  "..######..",
+  ".########.",
+  "##########",
+  "....##....",
+  "....##....",
+  "....##....",
+  "....##....",
+  ".........."],
+  // fish
+  [
+  "..........",
+  "..#####...",
+  ".#######..",
+  "##########",
+  "##########",
+  ".#######..",
+  "..#####...",
+  "..........",
+  "..........",
+  ".........."],
+  // house
+  [
+  "....##....",
+  "...####...",
+  "..######..",
+  ".########.",
+  "##########",
+  ".##....##.",
+  ".##....##.",
+  ".##....##.",
+  ".##....##.",
+  ".........."],
+  // moon
+  [
+  "...#####..",
+  "..##...##.",
+  ".##.......",
+  ".##.......",
+  ".##.......",
+  ".##.......",
+  ".##.......",
+  "..##...##.",
+  "...#####..",
+  ".........."],
+  // sword
+  [
+  "....##....",
+  "....##....",
+  "....##....",
+  "....##....",
+  "....##....",
+  "....##....",
+  "..######..",
+  "...####...",
+  "....##....",
+  "....##...."],
+  // potion
+  [
+  "...####...",
+  "...####...",
+  "....##....",
+  "....##....",
+  "...####...",
+  "..######..",
+  ".########.",
+  ".########.",
+  "..######..",
+  ".........."],
+  // cloud
+  [
+  "..........",
+  "...####...",
+  "..######..",
+  ".########.",
+  "##########",
+  "##########",
+  ".########.",
+  "..######..",
+  "..........",
+  ".........."],
+  // anchor
+  [
+  "....##....",
+  "....##....",
+  "....##....",
+  "##.####.##",
+  "##.####.##",
+  "##.####.##",
+  "##.####.##",
+  ".########.",
+  "..######..",
+  "...####..."],
+  // bomb
+  [
+  "....##....",
+  "...####...",
+  "..######..",
+  ".########.",
+  "##########",
+  "##########",
+  ".########.",
+  "..######..",
+  "...####...",
+  "....##...."],
+  // eye
+  [
+  "..........",
+  "..######..",
+  ".########.",
+  "##.####.##",
+  "##.####.##",
+  "##.####.##",
+  ".########.",
+  "..######..",
+  "..........",
+  ".........."],
+  // butterfly
+  [
+  "..........",
+  ".##..##..#",
+  "##....##..",
+  "##....##..",
+  "##....##..",
+  "##....##..",
+  ".##..##..#",
+  "..........",
+  "..........",
+  ".........."],
+  // sun
+  [
+  "#...##...#",
+  "#...##...#",
+  "..######..",
+  "..######..",
+  ".########.",
+  ".########.",
+  "..######..",
+  "..######..",
+  "#...##...#",
+  "#...##...#"],
+  // bell
+  [
+  "....##....",
+  "...####...",
+  "..######..",
+  "..######..",
+  "..######..",
+  "..######..",
+  ".########.",
+  ".########.",
+  "...####...",
+  ".........."],
+  // cake
+  [
+  "....##....",
+  "....##....",
+  "...####...",
+  ".########.",
+  "##########",
+  "##########",
+  "##########",
+  "##########",
+  "..........",
+  ".........."],
+  // boat
+  [
+  "..........",
+  "....##....",
+  "....##....",
+  "....##....",
+  "....##....",
+  "..######..",
+  ".########.",
+  "##########",
+  "..........",
+  ".........."],
+  // axe
+  [
+  "....###...",
+  "...####...",
+  "..####....",
+  ".####.....",
+  "....##....",
+  "....##....",
+  "....##....",
+  "....##....",
+  "....##....",
+  ".........."],
+  // shield
+  [
+  "##########",
+  "##########",
+  "##########",
+  "##########",
+  ".########.",
+  ".########.",
+  "..######..",
+  "...####...",
+  "....##....",
+  ".........."],
+  // hourglass
+  [
+  "##########",
+  ".########.",
+  "..######..",
+  "...####...",
+  "....##....",
+  "....##....",
+  "...####...",
+  "..######..",
+  ".########.",
+  "##########"],
+  // target
+  [
+  "...####...",
+  "..######..",
+  ".##....##.",
+  "##......##",
+  "##..##..##",
+  "##..##..##",
+  "##......##",
+  ".##....##.",
+  "..######..",
+  "...####..."]
+];
+
+const ICONS_15 = [
+  // heart
+  [
+  "..............",
+  "...####..####.",
+  "..######.######",
+  ".########.#####",
+  "###############",
+  "###############",
+  ".#############.",
+  "..###########..",
+  "...#########...",
+  "....#######....",
+  ".....#####.....",
+  "......###......",
+  ".......#.......",
+  "..............",
+  ".............."],
+  // star
+  [
+  "......##......",
+  "......##......",
+  ".....####.....",
+  ".....####.....",
+  "##############",
+  ".############.",
+  "..##########..",
+  "...########...",
+  "...########...",
+  "..##....##....",
+  "..##....##....",
+  ".##......##...",
+  ".##......##...",
+  "..............",
+  ".............."],
+  // mushroom
+  [
+  ".....######...",
+  "....########..",
+  "...##########.",
+  "..############",
+  ".#############",
+  "##############",
+  "##############",
+  "##############",
+  "..##########..",
+  "...########...",
+  "...########...",
+  "...########...",
+  "...########...",
+  "....######....",
+  ".............."],
+  // rocket
+  [
+  "......##......",
+  ".....####.....",
+  ".....####.....",
+  ".....####.....",
+  ".....####.....",
+  ".....####.....",
+  ".....####.....",
+  ".....####.....",
+  "....######....",
+  "...########...",
+  "..##.####.##..",
+  ".##..####..##.",
+  ".##..####..##.",
+  "..............",
+  ".............."],
+  // ghost
+  [
+  ".....######...",
+  "....########..",
+  "...##########.",
+  "..############",
+  "..############",
+  "..############",
+  "..############",
+  "..############",
+  "..############",
+  "..############",
+  "..############",
+  "..############",
+  "..#..####..#..",
+  "..............",
+  ".............."],
+  // apple
+  [
+  ".......#......",
+  "......##......",
+  ".....###......",
+  "....######....",
+  "...########...",
+  "..##########..",
+  ".############.",
+  "##############",
+  "##############",
+  "##############",
+  ".############.",
+  "..##########..",
+  "...########...",
+  "....######....",
+  ".............."],
+  // crown
+  [
+  "#...##...##...#",
+  "#...##...##...#",
+  "#...##...##...#",
+  "#...##...##...#",
+  "#...##...##...#",
+  "#...##...##...#",
+  "###############",
+  "###############",
+  "###############",
+  "###############",
+  "###############",
+  "###############",
+  "###############",
+  "###############",
+  ".............."],
+  // diamond
+  [
+  "......##......",
+  ".....####.....",
+  "....######....",
+  "...########...",
+  "..##########..",
+  ".############.",
+  "##############",
+  ".############.",
+  "..##########..",
+  "...########...",
+  "....######....",
+  ".....####.....",
+  "......##......",
+  "..............",
+  ".............."],
+  // flower
+  [
+  ".....######...",
+  "....########..",
+  "...##.####.##.",
+  "..##..####..##",
+  "..##..####..##",
+  "...##.####.##.",
+  "....########..",
+  ".....######...",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  ".............."],
+  // lightning
+  [
+  ".....######...",
+  "....######....",
+  "...######.....",
+  "..######......",
+  ".##########...",
+  ".....######...",
+  "....######....",
+  "...######.....",
+  "..######......",
+  ".######.......",
+  "######........",
+  "######........",
+  "..............",
+  "..............",
+  ".............."],
+  // key
+  [
+  "...######.....",
+  "..#....#......",
+  "..#....#......",
+  "..#....#......",
+  "..#....#......",
+  "..#....#......",
+  "...######.....",
+  "...##.##......",
+  "...##.##......",
+  "...##.##......",
+  "...##.##......",
+  "...##.##......",
+  "...##.##......",
+  "...##.##......",
+  ".............."],
+  // skull
+  [
+  ".....######...",
+  "....########..",
+  "...##########.",
+  "..############",
+  "..############",
+  "##.########.##",
+  "##.########.##",
+  "##.########.##",
+  "..############",
+  "..############",
+  "...##########.",
+  "...#..##..#...",
+  "...#..##..#...",
+  "....######....",
+  ".............."],
+  // tree
+  [
+  "......##......",
+  ".....####.....",
+  "....######....",
+  "...########...",
+  "..##########..",
+  ".############.",
+  "##############",
+  "##############",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  ".............."],
+  // fish
+  [
+  "..............",
+  "..............",
+  "...######.....",
+  "..########....",
+  ".##########...",
+  "##############",
+  "##############",
+  "##############",
+  "##############",
+  ".##########...",
+  "..########....",
+  "...######.....",
+  "..............",
+  "..............",
+  ".............."],
+  // house
+  [
+  "......##......",
+  ".....####.....",
+  "....######....",
+  "...########...",
+  "..##########..",
+  ".############.",
+  "##############",
+  ".##......##...",
+  ".##......##...",
+  ".##......##...",
+  ".##......##...",
+  ".##......##...",
+  ".##......##...",
+  ".##......##...",
+  ".............."],
+  // moon
+  [
+  "....########..",
+  "...##....##...",
+  "..##......##..",
+  ".##...........",
+  ".##...........",
+  ".##...........",
+  ".##...........",
+  ".##...........",
+  ".##...........",
+  ".##...........",
+  ".##...........",
+  "..##......##..",
+  "...##....##...",
+  "....########..",
+  ".............."],
+  // sword
+  [
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "....######....",
+  ".....####.....",
+  "......##......",
+  "......##......",
+  "......##......"],
+  // potion
+  [
+  ".....######...",
+  ".....######...",
+  "......##......",
+  "......##......",
+  "......##......",
+  ".....####.....",
+  "....######....",
+  "...########...",
+  "..##########..",
+  ".############.",
+  ".############.",
+  ".############.",
+  "..##########..",
+  "...########...",
+  ".............."],
+  // cloud
+  [
+  "..............",
+  "..............",
+  ".....######...",
+  "....########..",
+  "...##########.",
+  "..############",
+  ".#############",
+  "##############",
+  "##############",
+  ".#############",
+  "..############",
+  "...##########.",
+  "..............",
+  "..............",
+  ".............."],
+  // anchor
+  [
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "##..####..##..",
+  "##..####..##..",
+  "##..####..##..",
+  "##..####..##..",
+  "##..####..##..",
+  "##..####..##..",
+  "##..####..##..",
+  ".############.",
+  "..##########..",
+  "...########...",
+  "....######...."],
+  // bomb
+  [
+  "......##......",
+  ".....####.....",
+  "....######....",
+  "...########...",
+  "..##########..",
+  ".############.",
+  "##############",
+  "##############",
+  "##############",
+  "##############",
+  ".############.",
+  "..##########..",
+  "...########...",
+  "....######....",
+  "......##......"],
+  // eye
+  [
+  "..............",
+  "..............",
+  "...########...",
+  "..##########..",
+  ".############.",
+  "##.########.##",
+  "##.########.##",
+  "##.########.##",
+  "##.########.##",
+  "##.########.##",
+  ".############.",
+  "..##########..",
+  "...########...",
+  "..............",
+  ".............."],
+  // butterfly
+  [
+  "..............",
+  ".##......##...",
+  "##........##..",
+  "##........##..",
+  "##........##..",
+  "##........##..",
+  "##........##..",
+  "##........##..",
+  ".##......##...",
+  "..............",
+  "..............",
+  "..............",
+  "..............",
+  "..............",
+  ".............."],
+  // sun
+  [
+  "#....##....#..",
+  "#....##....#..",
+  "....######....",
+  "....######....",
+  "...########...",
+  "...########...",
+  "..##########..",
+  "..##########..",
+  "..##########..",
+  "..##########..",
+  "...########...",
+  "...########...",
+  "....######....",
+  "....######....",
+  "#....##....#.."],
+  // bell
+  [
+  "......##......",
+  ".....####.....",
+  "....######....",
+  "...########...",
+  "...########...",
+  "...########...",
+  "...########...",
+  "...########...",
+  "...########...",
+  "...########...",
+  "..##########..",
+  ".############.",
+  ".############.",
+  ".....####.....",
+  ".............."],
+  // cake
+  [
+  "......##......",
+  "......##......",
+  ".....####.....",
+  "....######....",
+  ".############.",
+  "##############",
+  "##############",
+  "##############",
+  "##############",
+  "##############",
+  "##############",
+  "##############",
+  "..............",
+  "..............",
+  ".............."],
+  // boat
+  [
+  "..............",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "....######....",
+  "...########...",
+  "..##########..",
+  ".############.",
+  "##############",
+  "..............",
+  "..............",
+  ".............."],
+  // axe
+  [
+  ".....######...",
+  "....######....",
+  "...######.....",
+  "..######......",
+  ".######.......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  "......##......",
+  ".............."],
+  // shield
+  [
+  "##############",
+  "##############",
+  "##############",
+  "##############",
+  "##############",
+  "##############",
+  ".############.",
+  ".############.",
+  ".############.",
+  ".############.",
+  "..##########..",
+  "..##########..",
+  "...########...",
+  "....######....",
+  ".....####....."],
+  // hourglass
+  [
+  "##############",
+  ".############.",
+  "..##########..",
+  "...########...",
+  "....######....",
+  ".....####.....",
+  "......##......",
+  "......##......",
+  ".....####.....",
+  "....######....",
+  "...########...",
+  "..##########..",
+  ".############.",
+  "##############",
+  ".............."],
+  // target
+  [
+  ".....######...",
+  "....########..",
+  "...##....##...",
+  "..##......##..",
+  ".##........##.",
+  ".##........##.",
+  "##..........##",
+  "##...####...##",
+  "##...####...##",
+  "##..........##",
+  ".##........##.",
+  ".##........##.",
+  "..##......##..",
+  "...##....##...",
+  "....########.."]
+];
+
+function gridFromIcon(icon){
+  return icon.map(row => row.split('').map(c => c === '#' ? 1 : 0));
+}
+function clues(line){
+  const out = []; let run = 0;
+  for(let i=0;i<line.length;i++){
+    if(line[i]===1){ run++; }
+    else if(run>0){ out.push(run); run=0; }
+  }
+  if(run>0) out.push(run);
+  return out.length ? out : [0];
+}
+function makePuzzle(size){
+  const icons = size===10 ? ICONS_10 : ICONS_15;
+  const grid = gridFromIcon(icons[0]);
+  return {
+    size, grid,
+    rowClues: grid.map(clues),
+    colClues: Array.from({length:size},(_,c)=>clues(grid.map(r=>r[c])))
+  };
+}
+
+/* ===================== STATE ===================== */
+const SIZES = {10: ICONS_10.length, 15: ICONS_15.length};
+const state = {
+  size: 10,
+  level: 0,
+  puzzle: null,
+  cells: null,      // 0 empty, 1 filled, 2 cross
+  mode: 1,          // 1 fill, 2 cross
+  mistakes: 0,
+  solved: false,
+  started: false,
+  startTime: 0,
+  elapsed: 0,
+  timerId: null
+};
+const LS_KEY = "launchtower_pixel_picross_v1";
+let progress = loadProgress();
+
+function loadProgress(){
+  try{
+    const raw = localStorage.getItem(LS_KEY);
+    if(raw){
+      const p = JSON.parse(raw);
+      if(p && typeof p === "object") return p;
+    }
+  }catch(e){}
+  return { solved:{}, best:{}, unlocked:{10:1, 15:1} };
+}
+function saveProgress(){
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(progress)); }catch(e){}
+}
+
+/* ===================== CANVAS ===================== */
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+let cell = 26, clueW = 0, clueH = 0, dpr = 1;
+
+function layout(){
+  const size = state.size;
+  const maxW = Math.min(window.innerWidth - 60, 520);
+  const maxH = Math.min(window.innerHeight - 260, 520);
+  cell = Math.floor(Math.min(maxW, maxH) / (size + 1.6));
+  cell = Math.max(16, Math.min(40, cell));
+  clueW = Math.ceil(cell * 1.15);
+  clueH = Math.ceil(cell * 1.15);
+  const boardW = clueW + size*cell;
+  const boardH = clueH + size*cell;
+  dpr = window.devicePixelRatio || 1;
+  cv.width = boardW * dpr;
+  cv.height = boardH * dpr;
+  cv.style.width = boardW + "px";
+  cv.style.height = boardH + "px";
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+
+function draw(){
+  const size = state.size;
+  const p = state.puzzle;
+  const boardW = clueW + size*cell;
+  const boardH = clueH + size*cell;
+  ctx.clearRect(0,0,boardW,boardH);
+
+  // background
+  ctx.fillStyle = "#12141c";
+  ctx.fillRect(0,0,boardW,boardH);
+
+  // clue area bg
+  ctx.fillStyle = "#171a23";
+  ctx.fillRect(0,0,clueW,boardH);
+  ctx.fillRect(0,0,boardW,clueH);
+
+  // row clues
+  ctx.fillStyle = "#e8ecf4";
+  ctx.font = `600 ${Math.max(10, cell*0.5)}px 'Segoe UI', sans-serif`;
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for(let r=0;r<size;r++){
+    const nums = p.rowClues[r];
+    const total = nums.length;
+    const startY = clueH + r*cell + cell/2;
+    const slot = cell/total;
+    nums.forEach((n,i)=>{
+      ctx.fillText(String(n), clueW - 4, startY + slot*i + slot/2);
+    });
+  }
+  // col clues
+  ctx.textAlign = "center";
+  for(let c=0;c<size;c++){
+    const nums = p.colClues[c];
+    const total = nums.length;
+    const startX = clueW + c*cell + cell/2;
+    const slot = cell/total;
+    nums.forEach((n,i)=>{
+      ctx.fillText(String(n), startX, clueH - 4 - slot*(total-1-i) - slot/2);
+    });
+  }
+
+  // cells
+  for(let r=0;r<size;r++){
+    for(let c=0;c<size;c++){
+      const x = clueW + c*cell, y = clueH + r*cell;
+      const v = state.cells[r][c];
+      if(v===1){
+        ctx.fillStyle = "#5eead4";
+        ctx.fillRect(x+1,y+1,cell-2,cell-2);
+        ctx.fillStyle = "rgba(255,255,255,.25)";
+        ctx.fillRect(x+1,y+1,cell-2,2);
+      } else if(v===2){
+        ctx.strokeStyle = "#f87171";
+        ctx.lineWidth = 2;
+        const m = cell*0.22;
+        ctx.beginPath();
+        ctx.moveTo(x+m,y+m); ctx.lineTo(x+cell-m,y+cell-m);
+        ctx.moveTo(x+cell-m,y+m); ctx.lineTo(x+m,y+cell-m);
+        ctx.stroke();
+      }
+      // grid lines
+      ctx.strokeStyle = "#2a2f40";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x+0.5, y+0.5, cell-1, cell-1);
+    }
+  }
+
+  // thicker outer border
+  ctx.strokeStyle = "#3a4158";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(clueW+1, clueH+1, size*cell-2, size*cell-2);
+
+  // separator lines
+  ctx.strokeStyle = "#3a4158";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(clueW+1, clueH+1); ctx.lineTo(clueW+1, clueH+size*cell-1);
+  ctx.moveTo(clueW+1, clueH+1); ctx.lineTo(clueW+size*cell-1, clueH+1);
+  ctx.stroke();
+}
+
+/* ===================== GAME LOGIC ===================== */
+function newLevel(size, level){
+  state.size = size;
+  state.level = level;
+  state.puzzle = makePuzzle(size);
+  state.cells = Array.from({length:size},()=>Array(size).fill(0));
+  state.mistakes = 0;
+  state.solved = false;
+  state.started = false;
+  state.elapsed = 0;
+  if(state.timerId){ clearInterval(state.timerId); state.timerId=null; }
+  layout();
+  updateStats();
+  draw();
+  showOverlay(false);
+}
+
+function startTimer(){
+  if(state.started) return;
+  state.started = true;
+  state.startTime = Date.now();
+  state.timerId = setInterval(tick, 500);
+}
+function tick(){
+  state.elapsed = Math.floor((Date.now()-state.startTime)/1000);
+  updateStats();
+}
+function fmtTime(s){
+  const m = Math.floor(s/60), sec = s%60;
+  return m + ":" + String(sec).padStart(2,"0");
+}
+
+function updateStats(){
+  document.getElementById("stLevel").textContent = state.level+1;
+  document.getElementById("stErr").textContent = state.mistakes;
+  document.getElementById("stTime").textContent = fmtTime(state.elapsed);
+  const best = progress.best[state.size] && progress.best[state.size][state.level];
+  document.getElementById("stBest").textContent = best ? fmtTime(best) : "—";
+}
+
+function checkSolved(){
+  const size = state.size, p = state.puzzle;
+  for(let r=0;r<size;r++){
+    for(let c=0;c<size;c++){
+      const want = p.grid[r][c]===1 ? 1 : 0;
+      if(state.cells[r][c] !== want) return false;
+    }
+  }
+  return true;
+}
+
+function onCellClick(r,c){
+  if(state.solved) return;
+  startTimer();
+  const cur = state.cells[r][c];
+  // cycle: 0 -> mode -> other -> 0
+  let next;
+  if(cur === 0) next = state.mode;
+  else if(cur === state.mode) next = state.mode===1 ? 2 : 1;
+  else next = 0;
+  state.cells[r][c] = next;
+  draw();
+  if(checkSolved()) win();
+}
+
+function win(){
+  state.solved = true;
+  if(state.timerId){ clearInterval(state.timerId); state.timerId=null; }
+  state.elapsed = Math.floor((Date.now()-state.startTime)/1000);
+  updateStats();
+  // record
+  const key = state.size;
+  if(!progress.solved[key]) progress.solved[key] = {};
+  progress.solved[key][state.level] = true;
+  if(!progress.best[key]) progress.best[key] = {};
+  const prev = progress.best[key][state.level];
+  if(prev === undefined || state.elapsed < prev){
+    progress.best[key][state.level] = state.elapsed;
+  }
+  // unlock next
+  const maxLvl = SIZES[key];
+  if(state.level+1 < maxLvl){
+    if(!progress.unlocked[key]) progress.unlocked[key] = 1;
+    progress.unlocked[key] = Math.max(progress.unlocked[key], state.level+2);
+  }
+  saveProgress();
+  const isLast = state.level+1 >= maxLvl;
+  showOverlay(true, isLast ? "ALL LEVELS CLEARED!" : "SOLVED!",
+    `Time ${fmtTime(state.elapsed)} · ${state.mistakes} mistake${state.mistakes===1?"":"s"}`,
+    isLast ? "PLAY AGAIN" : "NEXT LEVEL");
+}
+
+/* ===================== OVERLAY ===================== */
+const overlay = document.getElementById("overlay");
+const ovTitle = document.getElementById("ovTitle");
+const ovText = document.getElementById("ovText");
+const ovBtn = document.getElementById("ovBtn");
+let ovAction = null;
+
+function showOverlay(show, title, text, btnLabel){
+  if(show){
+    overlay.classList.remove("hidden");
+    ovTitle.textContent = title || "PIXEL PICROSS";
+    ovText.textContent = text || "Fill the cells so each row and column matches its number clues.";
+    ovBtn.textContent = btnLabel || "PLAY";
+    ovAction = "play";
+  } else {
+    overlay.classList.add("hidden");
+  }
+}
+ovBtn.addEventListener("click", ()=>{
+  if(ovAction === "play"){
+    if(state.solved && state.level+1 < SIZES[state.size]){
+      newLevel(state.size, state.level+1);
+    } else {
+      newLevel(state.size, state.level);
+    }
+  } else if(ovAction === "levels"){
+    showLevelSelect();
+  }
+});
+
+/* ===================== LEVEL SELECT ===================== */
+function showLevelSelect(){
+  overlay.classList.remove("hidden");
+  ovTitle.textContent = "LEVELS";
+  ovText.textContent = "Pick a level. Locked levels unlock as you solve.";
+  ovBtn.textContent = "CLOSE";
+  ovAction = "close";
+  // build a simple grid of level buttons
+  const container = document.createElement("div");
+  container.style.display = "flex";
+  container.style.flexWrap = "wrap";
+  container.style.gap = "8px";
+  container.style.justifyContent = "center";
+  container.style.maxWidth = "320px";
+  container.style.margin = "10px 0";
+  for(const size of [10,15]){
+    const maxLvl = SIZES[size];
+    const unlocked = progress.unlocked[size] || 1;
+    for(let i=0;i<maxLvl;i++){
+      const b = document.createElement("button");
+      const locked = i+1 > unlocked;
+      const solved = progress.solved[size] && progress.solved[size][i];
+      b.textContent = (size===10?"10":"15")+"-"+(i+1);
+      b.style.cssText = "background:"+(locked?"#1d2130":"#171a23")+";border:1px solid "+(solved?"#4ade80":"#2a2f40")+";color:"+(locked?"#4a5065":"#e8ecf4")+";padding:6px 10px;border-radius:8px;font-size:12px;font-weight:600;cursor:"+(locked?"not-allowed":"pointer")+";";
+      if(solved) b.textContent += " ✓";
+      if(locked){ b.disabled = true; }
+      else{
+        b.addEventListener("click", ()=>{
+          overlay.querySelectorAll("button:not(.big)").forEach(x=>{ if(x!==ovBtn) x.remove(); });
+          newLevel(size, i);
+        });
+      }
+      container.appendChild(b);
+    }
+  }
+  // insert before the big button
+  ovBtn.parentNode.insertBefore(container, ovBtn);
+}
+ovBtn.addEventListener("click", ()=>{
+  if(ovAction === "close"){
+    overlay.classList.add("hidden");
+    overlay.querySelectorAll("button:not(.big)").forEach(x=>x.remove());
+  }
+});
+
+/* ===================== INPUT ===================== */
+cv.addEventListener("click", (e)=>{
+  const rect = cv.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  const c = Math.floor((x - clueW)/cell);
+  const r = Math.floor((y - clueH)/cell);
+  if(r>=0 && r<state.size && c>=0 && c<state.size){
+    onCellClick(r,c);
+  }
+});
+
+document.getElementById("modeBtn").addEventListener("click", toggleMode);
+function toggleMode(){
+  state.mode = state.mode===1 ? 2 : 1;
+  const btn = document.getElementById("modeBtn");
+  btn.textContent = state.mode===1 ? "FILL" : "CROSS";
+  btn.className = "btn mode " + (state.mode===1 ? "fill" : "cross");
+}
+document.getElementById("resetBtn").addEventListener("click", ()=>{
+  newLevel(state.size, state.level);
+});
+document.getElementById("levelsBtn").addEventListener("click", showLevelSelect);
+
+document.querySelectorAll("#sizeSeg button").forEach(b=>{
+  b.addEventListener("click", ()=>{
+    document.querySelectorAll("#sizeSeg button").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on");
+    const size = parseInt(b.dataset.size,10);
+    state.size = size;
+    state.level = 0;
+    newLevel(size, 0);
+  });
+});
+
+document.addEventListener("keydown", (e)=>{
+  const k = e.key.toLowerCase();
+  if(k==="f") toggleMode();
+  else if(k==="r") newLevel(state.size, state.level);
+  else if(k==="l") showLevelSelect();
+  else if(k==="1"){ document.querySelector('#sizeSeg button[data-size="10"]').click(); }
+  else if(k==="2"){ document.querySelector('#sizeSeg button[data-size="15"]').click(); }
+});
+
+window.addEventListener("resize", ()=>{ layout(); draw(); });
+
+/* ===================== TOAST ===================== */
+function toast(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  setTimeout(()=>t.classList.remove("show"), 2200);
+}
+
+/* ===================== INIT ===================== */
+newLevel(10, 0);
+showOverlay(true, "PIXEL PICROSS",
+  "Fill the cells so each row and column matches its number clues. Every number is the length of a solid block of filled cells in that line.",
+  "PLAY");
+</script>
+</body>
+</html>
